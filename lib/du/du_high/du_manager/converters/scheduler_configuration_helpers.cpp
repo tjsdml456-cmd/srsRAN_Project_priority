@@ -25,6 +25,7 @@
 #include "srsran/du/du_cell_config.h"
 #include "srsran/scheduler/config/logical_channel_config_factory.h"
 #include "srsran/scheduler/config/sched_cell_config_helpers.h"
+#include "srsran/srslog/srslog.h"
 
 using namespace srsran;
 using namespace srs_du;
@@ -140,10 +141,28 @@ sched_ue_config_request srsran::srs_du::create_scheduler_ue_config_request(const
     sched_lc_ch.rrm_policy.plmn_id = ue_ctx.nr_cgi.plmn_id;
     sched_lc_ch.qos.emplace();
     // 5QI is already mapped in du_bearer_resource_manager.cpp when receiving from Core
-    sched_lc_ch.qos->five_qi      = drb.qos.qos_desc.get_5qi();
-    sched_lc_ch.qos->qos          = *get_5qi_to_qos_characteristics_mapping(drb.qos.qos_desc.get_5qi());
+    five_qi_t five_qi = drb.qos.qos_desc.get_5qi();
+    sched_lc_ch.qos->five_qi = five_qi;
+    // Get QoS characteristics from five_qi_qos_mapping.cpp - this ensures PDB and other QoS values flow sequentially
+    // from five_qi_qos_mapping.cpp -> qos -> runtime_qos -> scheduler
+    const standardized_qos_characteristics* qos_chars = get_5qi_to_qos_characteristics_mapping(five_qi);
+    if (qos_chars != nullptr) {
+      // Use PDB and other QoS values from five_qi_qos_mapping.cpp
+      // This ensures packet_delay_budget_ms flows sequentially through the system
+      sched_lc_ch.qos->qos = *qos_chars;
+    } else {
+      // If mapping not found, this should not happen for valid 5QI values
+      // Log warning but continue with default values
+      static srslog::basic_logger& logger = srslog::fetch_basic_logger("DU");
+      logger.warning("5QI {} not found in mapping table for DRB{}, using default QoS values",
+                     static_cast<unsigned>(five_qi),
+                     static_cast<unsigned>(drb.drb_id));
+      // Use default values - this should be avoided by ensuring 5QI is in mapping table
+      sched_lc_ch.qos->qos = standardized_qos_characteristics{};
+    }
     sched_lc_ch.qos->arp_priority = drb.qos.alloc_retention_prio.prio_level_arp;
     sched_lc_ch.qos->gbr_qos_info = drb.qos.gbr_qos_info;
+    // Sync runtime QoS with original - this copies qos.packet_delay_budget_ms to runtime_qos.packet_delay_budget_ms
     sched_lc_ch.qos->sync_runtime_with_original();
   }
   sched_cfg.drx_cfg      = ue_res_cfg.cell_group.mcg_cfg.drx_cfg;
@@ -151,4 +170,5 @@ sched_ue_config_request srsran::srs_du::create_scheduler_ue_config_request(const
 
   return sched_cfg;
 }
+
 

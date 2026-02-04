@@ -156,6 +156,7 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
     return std::numeric_limits<double>::max();
   }
 
+  static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
   static constexpr uint16_t max_combined_prio_level = qos_prio_level_t::max() * arp_prio_level_t::max();
   uint16_t                  min_combined_prio       = max_combined_prio_level;
   double                    gbr_weight              = 0;
@@ -169,7 +170,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
       if (u.pending_dl_newtx_bytes(lc->lcid) == 0) {
         static unsigned skip_log_counter = 0;
         if ((skip_log_counter++ % 500) == 0) {
-          static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
           logger.debug("[STEP7-SCHED] UE{} LCID{} 스킵: pending_dl_newtx_bytes=0", 
                        u.ue_index(), static_cast<unsigned>(lc->lcid));
         }
@@ -190,7 +190,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
         
         static unsigned log_counter = 0;
         if ((log_counter++ % 100) == 0) {  // 100번마다 로그
-          static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
           logger.info("[STEP7-SCHED] Priority 계산 - UE{} LCID{} QoS_Prio={} ARP_Prio={} Combined={} min_combined_prio={}",
                        u.ue_index(), static_cast<unsigned>(lc->lcid),
                        lc->qos->runtime_qos.priority.value(),
@@ -206,32 +205,24 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
         double delay_contrib = hol_delay_ms / static_cast<double>(pdb);
         delay_weight += delay_contrib;
         
-        // Log delay_weight calculation details (periodically)
-        static unsigned delay_log_counter = 0;
-        if ((delay_log_counter++ % 100) == 0) {
-          static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
-          logger.info("[DELAY-WEIGHT] UE{} LCID{} hol_toa={} slot_tx={} hol_delay_ms={} PDB={}ms delay_contrib={:.3f} delay_weight={:.3f}",
-                      u.ue_index(),
-                      static_cast<unsigned>(lc->lcid),
-                      hol_toa.to_uint(),
-                      slot_tx.to_uint(),
-                      hol_delay_ms,
-                      pdb,
-                      delay_contrib,
-                      delay_weight);
-        }
+        // Log delay_weight calculation details (every invocation)
+        logger.info("[DELAY-WEIGHT] UE{} LCID{} hol_toa={} slot_tx={} hol_delay_ms={} PDB={}ms delay_contrib={:.3f} delay_weight={:.3f}",
+                    u.ue_index(),
+                    static_cast<unsigned>(lc->lcid),
+                    hol_toa.to_uint(),
+                    slot_tx.to_uint(),
+                    hol_delay_ms,
+                    pdb,
+                    delay_contrib,
+                    delay_weight);
       } else {
-        // Log when hol_toa is invalid or condition not met (periodically)
-        static unsigned hol_toa_log_counter = 0;
-        if ((hol_toa_log_counter++ % 100) == 0) {
-          static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
-          logger.info("[DELAY-WEIGHT] UE{} LCID{} hol_toa_valid={} hol_toa={} slot_tx={} (condition not met, delay_weight not updated)",
-                      u.ue_index(),
-                      static_cast<unsigned>(lc->lcid),
-                      hol_toa.valid(),
-                      hol_toa.valid() ? hol_toa.to_uint() : 0,
-                      slot_tx.to_uint());
-        }
+        // Log when hol_toa is invalid or condition not met (every invocation)
+        logger.info("[DELAY-WEIGHT] UE{} LCID{} hol_toa_valid={} hol_toa={} slot_tx={} (condition not met, delay_weight not updated)",
+                    u.ue_index(),
+                    static_cast<unsigned>(lc->lcid),
+                    hol_toa.valid(),
+                    hol_toa.valid() ? hol_toa.to_uint() : 0,
+                    slot_tx.to_uint());
       }
 
       // Check resource type first - if GBR or Delay Critical GBR, calculate gbr_weight even without runtime_gbr_qos_info
@@ -252,7 +243,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
         // Debug logging for dl_avg_rate = 0 issue
         static unsigned gbr_debug_log_counter = 0;
         if ((gbr_debug_log_counter++ % 100) == 0) {
-          static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
           logger.info("[GBR-DEBUG] UE{} LCID{} res_type={} gbr_dl={} dl_avg_rate={:.3f} gbr_weight_before={:.3f}",
                       u.ue_index(), static_cast<unsigned>(lc->lcid),
                       lc->qos->runtime_qos.res_type == qos_flow_resource_type::gbr ? "GBR" : "DelayCriticalGBR",
@@ -265,7 +255,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
           // dl_avg_rate = 0인 경우 상세 로그
           static unsigned gbr_zero_log_counter = 0;
           if ((gbr_zero_log_counter++ % 100) == 0) {
-            static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
             logger.warning("[GBR-ZERO] UE{} LCID{} dl_avg_rate=0! res_type={} gbr_dl={} max_metric_weight={:.0f} - avg_bytes_per_slot may not be initialized or no scheduling occurred",
                           u.ue_index(), static_cast<unsigned>(lc->lcid),
                           lc->qos->runtime_qos.res_type == qos_flow_resource_type::gbr ? "GBR" : "DelayCriticalGBR",
@@ -281,7 +270,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
         // Debug logging for dl_avg_rate = 0 issue
         static unsigned gbr_info_debug_log_counter = 0;
         if ((gbr_info_debug_log_counter++ % 100) == 0) {
-          static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
           logger.info("[GBR-INFO-DEBUG] UE{} LCID{} gbr_dl={} dl_avg_rate={:.3f} gbr_weight_before={:.3f}",
                       u.ue_index(), static_cast<unsigned>(lc->lcid), gbr_dl, dl_avg_rate, gbr_weight);
         }
@@ -292,7 +280,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
           // dl_avg_rate = 0인 경우 상세 로그
           static unsigned gbr_info_zero_log_counter = 0;
           if ((gbr_info_zero_log_counter++ % 100) == 0) {
-            static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
             logger.warning("[GBR-INFO-ZERO] UE{} LCID{} dl_avg_rate=0! gbr_dl={} max_metric_weight={:.0f} - avg_bytes_per_slot may not be initialized or no scheduling occurred",
                           u.ue_index(), static_cast<unsigned>(lc->lcid), gbr_dl, max_metric_weight);
           }
@@ -320,7 +307,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
     if (not found_valid_lc) {
       static unsigned no_lc_log_counter = 0;
       if ((no_lc_log_counter++ % 500) == 0) {
-        static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
         logger.info("[STEP7-SCHED] UE{} 유효한 LC 없음 (pending bytes가 모두 0 또는 LC 없음), min_combined_prio={} 유지", 
                     u.ue_index(), min_combined_prio);
       }
@@ -334,7 +320,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
   // Log gbr_weight calculation details (periodically)
   static unsigned gbr_weight_log_counter = 0;
   if ((gbr_weight_log_counter++ % 100) == 0) {
-    static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
     logger.info("[GBR-WEIGHT] UE{} gbr_enabled={} gbr_weight_before={:.3f} gbr_weight_after={:.3f} (reason: {})",
                 u.ue_index(),
                 policy_params.gbr_enabled,
@@ -347,18 +332,14 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
   double delay_weight_before = delay_weight;
   delay_weight = policy_params.pdb_enabled and delay_weight != 0 ? delay_weight : 1.0;
   
-  // Log delay_weight final value and reason (periodically)
-  static unsigned delay_final_log_counter = 0;
-  if ((delay_final_log_counter++ % 100) == 0) {
-    static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
-    logger.info("[DELAY-WEIGHT-FINAL] UE{} delay_weight_before={:.3f} pdb_enabled={} delay_weight_after={:.3f} (reason: {})",
-                u.ue_index(),
-                delay_weight_before,
-                policy_params.pdb_enabled,
-                delay_weight,
-                (policy_params.pdb_enabled and delay_weight_before != 0) ? "calculated" : 
-                (not policy_params.pdb_enabled) ? "pdb_disabled" : "delay_weight_was_zero");
-  }
+  // Log delay_weight final value and reason (every invocation)
+  logger.info("[DELAY-WEIGHT-FINAL] UE{} delay_weight_before={:.3f} pdb_enabled={} delay_weight_after={:.3f} (reason: {})",
+              u.ue_index(),
+              delay_weight_before,
+              policy_params.pdb_enabled,
+              delay_weight,
+              (policy_params.pdb_enabled and delay_weight_before != 0) ? "calculated" : 
+              (not policy_params.pdb_enabled) ? "pdb_disabled" : "delay_weight_was_zero");
 
   double pf_weight = compute_pf_metric(estim_dl_rate, avg_dl_rate, policy_params.pf_fairness_coeff);
   
@@ -374,7 +355,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
   
   static unsigned prio_log_counter = 0;
   if (policy_params.priority_enabled && (prio_log_counter++ % 100) == 0) {
-    static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
     logger.debug("[STEP8-SCHED] prio_weight 계산 - UE{} min_combined_prio={} prio_weight={:.3f}",
                  u.ue_index(), min_combined_prio, prio_weight);
   }
@@ -382,7 +362,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
   // Log priority calculation details (periodically to avoid log spam)
   static unsigned log_counter = 0;
   if ((log_counter++ % 100) == 0) {  // Log every 100th call
-    static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
     logger.info("DL Priority calc: UE{} min_combined_prio={}, prio_weight={:.3f}, pf_weight={:.3f}, gbr_weight={:.3f}, delay_weight={:.3f}",
                 u.ue_index(),
                 min_combined_prio,
@@ -425,7 +404,6 @@ static double compute_dl_qos_weights(const slice_ue&                  u,
   // Log final priority (periodically)
   static unsigned final_log_counter = 0;
   if ((final_log_counter++ % 100) == 0) {
-    static srslog::basic_logger& logger = srslog::fetch_basic_logger("SCHED");
     logger.info("DL Final Priority: UE{} final_priority={:.3f} (min_combined_prio={})",
                 u.ue_index(),
                 final_priority,
@@ -828,6 +806,7 @@ void scheduler_time_qos::ue_ctxt::save_ul_alloc(unsigned alloc_bytes)
   }
   ul_sum_alloc_bytes += alloc_bytes;
 }
+
 
 
 
