@@ -49,7 +49,7 @@ public:
 
 protected:
   // domain-specific PDU handler
-  void handle_pdu(gtpu_dissected_pdu&& pdu, const sockaddr_storage& src_addr) final
+  void handle_pdu(gtpu_dissected_pdu&& pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) final
   {
     size_t pdu_len = pdu.buf.length();
     // gtpu_teid_t      teid                  = pdu.hdr.teid;
@@ -145,3 +145,4 @@ private:
   gtpu_tunnel_nru_config::gtpu_tunnel_nru_rx_config config;
 };
 } // namespace srsran
+

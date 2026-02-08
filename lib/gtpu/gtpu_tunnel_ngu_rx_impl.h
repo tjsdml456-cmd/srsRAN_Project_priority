@@ -94,7 +94,7 @@ public:
 
 protected:
   // domain-specific PDU handler
-  void handle_pdu(gtpu_dissected_pdu&& pdu, const sockaddr_storage& src_addr) final
+  void handle_pdu(gtpu_dissected_pdu&& pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) final
   {
     if (stopped) {
       return;
@@ -154,7 +154,34 @@ protected:
 
     if (!pdu.hdr.flags.seq_number || config.t_reordering.count() == 0) {
       // Forward this SDU straight away.
-      byte_buffer      rx_sdu      = gtpu_extract_msg(std::move(pdu)); // header is invalidated after extraction
+      byte_buffer rx_sdu = gtpu_extract_msg(std::move(pdu)); // header is invalidated after extraction
+      
+      // Copy outer IP packet's ToS to inner IP packet (for iptables DSCP mapping)
+      if (outer_tos.has_value()) {
+        logger.log_info("[IPTABLES-DSCP] GTP-U received outer_tos=0x{:02x} (DSCP={})", 
+                        outer_tos.value(), (outer_tos.value() >> 2) & 0x3F);
+        
+        if (rx_sdu.length() >= 20) {
+          uint8_t version_ihl = rx_sdu[0];
+          if ((version_ihl >> 4) == 4) { // IPv4
+            uint8_t inner_tos_before = rx_sdu[1];
+            uint8_t ecn = inner_tos_before & 0x03; // Preserve ECN bits
+            uint8_t outer_dscp = (outer_tos.value() >> 2) & 0x3F;
+            uint8_t new_tos = (outer_dscp << 2) | ecn;
+            rx_sdu[1] = new_tos;
+            
+            logger.log_info("[IPTABLES-DSCP] DSCP copied: outer ToS=0x{:02x} (DSCP={}) -> inner ToS=0x{:02x}->0x{:02x} (DSCP={})",
+                            outer_tos.value(), outer_dscp, inner_tos_before, new_tos, outer_dscp);
+          } else {
+            logger.log_warning("[IPTABLES-DSCP] Inner packet is not IPv4 (version_ihl=0x{:02x})", version_ihl);
+          }
+        } else {
+          logger.log_warning("[IPTABLES-DSCP] Inner packet too short (len={} < 20)", rx_sdu.length());
+        }
+      } else {
+        logger.log_debug("[IPTABLES-DSCP] No outer_tos available (iptables DSCP mapping not applied)");
+      }
+      
       gtpu_rx_sdu_info rx_sdu_info = {std::move(rx_sdu), pdu_session_info.qos_flow_id};
       deliver_sdu(rx_sdu_info);
       return;
@@ -162,6 +189,32 @@ protected:
 
     uint16_t    sn     = pdu.hdr.seq_number;
     byte_buffer rx_sdu = gtpu_extract_msg(std::move(pdu)); // header is invalidated after extraction
+    
+    // Copy outer IP packet's ToS to inner IP packet (for iptables DSCP mapping)
+    if (outer_tos.has_value()) {
+      logger.log_info("[IPTABLES-DSCP] GTP-U received outer_tos=0x{:02x} (DSCP={})", 
+                      outer_tos.value(), (outer_tos.value() >> 2) & 0x3F);
+      
+      if (rx_sdu.length() >= 20) {
+        uint8_t version_ihl = rx_sdu[0];
+        if ((version_ihl >> 4) == 4) { // IPv4
+          uint8_t inner_tos_before = rx_sdu[1];
+          uint8_t ecn = inner_tos_before & 0x03; // Preserve ECN bits
+          uint8_t outer_dscp = (outer_tos.value() >> 2) & 0x3F;
+          uint8_t new_tos = (outer_dscp << 2) | ecn;
+          rx_sdu[1] = new_tos;
+          
+          logger.log_info("[IPTABLES-DSCP] DSCP copied: outer ToS=0x{:02x} (DSCP={}) -> inner ToS=0x{:02x}->0x{:02x} (DSCP={})",
+                          outer_tos.value(), outer_dscp, inner_tos_before, new_tos, outer_dscp);
+        } else {
+          logger.log_warning("[IPTABLES-DSCP] Inner packet is not IPv4 (version_ihl=0x{:02x})", version_ihl);
+        }
+      } else {
+        logger.log_warning("[IPTABLES-DSCP] Inner packet too short (len={} < 20)", rx_sdu.length());
+      }
+    } else {
+      logger.log_debug("[IPTABLES-DSCP] No outer_tos available (iptables DSCP mapping not applied)");
+    }
 
     // Check out-of-window
     if (!inside_rx_window(sn)) {
@@ -371,3 +424,4 @@ struct formatter<srsran::gtpu_rx_state> {
 };
 
 } // namespace fmt
+

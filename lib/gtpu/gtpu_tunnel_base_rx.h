@@ -42,7 +42,7 @@ public:
   /*
    * SDU/PDU handlers
    */
-  void handle_pdu(byte_buffer buf, const sockaddr_storage& src_addr) final
+  void handle_pdu(byte_buffer buf, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) final
   {
     gtpu_dissected_pdu dissected_pdu;
     if (test_mode) {
@@ -56,13 +56,14 @@ public:
       }
     }
     // continue processing in domain-specific subclass
-    handle_pdu(std::move(dissected_pdu), src_addr);
+    handle_pdu(std::move(dissected_pdu), src_addr, outer_tos);
   }
 
 protected:
-  virtual void handle_pdu(gtpu_dissected_pdu&& pdu, const sockaddr_storage& src_addr) = 0;
+  virtual void handle_pdu(gtpu_dissected_pdu&& pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) = 0;
 
   gtpu_tunnel_logger logger;
   bool               test_mode;
 };
 } // namespace srsran
+

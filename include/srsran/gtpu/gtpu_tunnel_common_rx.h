@@ -23,6 +23,7 @@
 #pragma once
 
 #include "srsran/adt/byte_buffer.h"
+#include <optional>
 
 struct sockaddr_storage;
 
@@ -64,7 +65,9 @@ public:
   /// \brief Interface for the IO gateway to pass PDUs into the GTP-U
   /// \param pdu PDU to be handled
   /// \param src_addr Source address of this PDU
-  virtual void handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) = 0;
+  /// \param outer_tos Optional ToS value from outer IP packet header (for iptables DSCP mapping)
+  virtual void handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) = 0;
 };
 
 } // namespace srsran
+

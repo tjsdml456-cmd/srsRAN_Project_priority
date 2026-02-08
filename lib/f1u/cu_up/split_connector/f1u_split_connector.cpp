@@ -80,10 +80,10 @@ public:
 
   void connect_gtpu_demux(gtpu_demux_rx_upper_layer_interface& gtpu_demux_) { gtpu_demux = &gtpu_demux_; }
 
-  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) override
+  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) override
   {
     srsran_assert(gtpu_demux != nullptr, "GTP-U handler must not be nullptr");
-    gtpu_demux->handle_pdu(std::move(pdu), src_addr);
+    gtpu_demux->handle_pdu(std::move(pdu), src_addr, outer_tos);
   }
 
 private:
@@ -281,3 +281,4 @@ void f1u_split_connector::disconnect_cu_bearer(const up_transport_layer_info& ul
   }
   logger_cu.debug("Removed CU F1-U bearer with UL GTP Tunnel={}.", ul_up_tnl_info);
 }
+

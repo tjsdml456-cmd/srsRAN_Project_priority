@@ -81,7 +81,7 @@ void gtpu_demux_impl::apply_test_teid(gtpu_teid_t teid)
   test_teid = teid;
 }
 
-void gtpu_demux_impl::handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr)
+void gtpu_demux_impl::handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos)
 {
   if (stopped.load(std::memory_order_relaxed)) {
     return;
@@ -108,7 +108,7 @@ void gtpu_demux_impl::handle_pdu(byte_buffer pdu, const sockaddr_storage& src_ad
     logger.info("Dropped GTP-U PDU, tunnel not found. teid={}", teid);
     return;
   }
-  if (not it->second.batched_queue.try_push(gtpu_demux_pdu_ctx_t{std::move(pdu), src_addr})) {
+  if (not it->second.batched_queue.try_push(gtpu_demux_pdu_ctx_t{std::move(pdu), src_addr, outer_tos})) {
     if (not cfg.warn_on_drop) {
       logger.info("Dropped GTP-U PDU, queue is full. teid={}", teid);
     } else {
@@ -150,5 +150,6 @@ void gtpu_demux_impl::handle_pdu_impl(gtpu_teid_t teid, gtpu_demux_pdu_ctx_t pdu
   }
   // Forward entire PDU to the tunnel.
   // As removal happens in the same thread as handling the PDU, we no longer need the lock.
-  tunnel->handle_pdu(std::move(pdu_ctx.pdu), pdu_ctx.src_addr);
+  tunnel->handle_pdu(std::move(pdu_ctx.pdu), pdu_ctx.src_addr, pdu_ctx.outer_tos);
 }
+

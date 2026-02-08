@@ -89,10 +89,10 @@ public:
 
   void connect_gtpu_demux(gtpu_demux_rx_upper_layer_interface& gtpu_demux_) { gtpu_demux = &gtpu_demux_; }
 
-  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) override
+  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) override
   {
     srsran_assert(gtpu_demux != nullptr, "GTP-U handler must not be nullptr");
-    gtpu_demux->handle_pdu(std::move(pdu), src_addr);
+    gtpu_demux->handle_pdu(std::move(pdu), src_addr, outer_tos);
   }
 
 private:
@@ -233,3 +233,4 @@ private:
 };
 
 } // namespace srsran::srs_du
+

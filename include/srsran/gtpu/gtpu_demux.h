@@ -27,6 +27,7 @@
 #include "srsran/gtpu/gtpu_teid.h"
 #include "srsran/gtpu/gtpu_tunnel_common_rx.h"
 #include "srsran/support/executors/task_executor.h"
+#include <optional>
 #include <sys/socket.h>
 
 namespace srsran {
@@ -39,8 +40,9 @@ struct gtpu_demux_cfg_t {
 };
 
 struct gtpu_demux_pdu_ctx_t {
-  byte_buffer      pdu;
-  sockaddr_storage src_addr;
+  byte_buffer            pdu;
+  sockaddr_storage       src_addr;
+  std::optional<uint8_t> outer_tos; // ToS from outer IP packet header (for iptables DSCP mapping)
 };
 
 using gtpu_demux_dispatch_queue = batched_dispatch_queue<gtpu_demux_pdu_ctx_t>;
@@ -56,7 +58,8 @@ public:
   virtual ~gtpu_demux_rx_upper_layer_interface() = default;
 
   /// \brief Interface for the IO gateway to pass PDUs into the GTP-U demuxer.
-  virtual void handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) = 0;
+  /// \param[in] outer_tos Optional ToS value from outer IP packet header (for iptables DSCP mapping)
+  virtual void handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) = 0;
 };
 
 /// \brief This interface manages the TEID to GTP-U tunnel mapping.
@@ -87,3 +90,4 @@ public:
 };
 
 } // namespace srsran
+

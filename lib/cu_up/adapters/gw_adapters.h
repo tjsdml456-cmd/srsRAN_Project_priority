@@ -40,10 +40,10 @@ public:
 
   void disconnect() { gtpu_demux = nullptr; }
 
-  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) override
+  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) override
   {
     if (gtpu_demux != nullptr) {
-      gtpu_demux->handle_pdu(std::move(pdu), src_addr);
+      gtpu_demux->handle_pdu(std::move(pdu), src_addr, outer_tos);
     } else {
       srslog::fetch_basic_logger("GTPU", false).debug("Dropped DL GTP-U PDU. Demux adapter is disconnected.");
     }
@@ -54,3 +54,4 @@ private:
 };
 
 } // namespace srsran::srs_cu_up
+

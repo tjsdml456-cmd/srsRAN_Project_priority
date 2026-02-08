@@ -44,7 +44,7 @@ public:
   ~gtpu_demux_impl() override = default;
 
   // gtpu_demux_rx_upper_layer_interface
-  void handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) override; // Will be run from IO executor.
+  void handle_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) override; // Will be run from IO executor.
 
   // gtpu_demux_ctrl
   expected<std::unique_ptr<gtpu_demux_dispatch_queue>>
@@ -100,3 +100,4 @@ struct formatter<srsran::gtpu_demux_cfg_t> {
   }
 };
 } // namespace fmt
+

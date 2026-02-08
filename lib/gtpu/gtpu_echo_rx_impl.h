@@ -42,7 +42,7 @@ public:
 
 protected:
   // domain-specific PDU handler
-  void handle_pdu(gtpu_dissected_pdu&& pdu, const sockaddr_storage& src_addr) final
+  void handle_pdu(gtpu_dissected_pdu&& pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) final
   {
     // TEID sanity check
     if (pdu.hdr.teid != GTPU_PATH_MANAGEMENT_TEID) {
@@ -111,3 +111,4 @@ private:
   psup_packing            psup_packer;
 };
 } // namespace srsran
+

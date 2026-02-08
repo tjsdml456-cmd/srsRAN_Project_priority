@@ -27,10 +27,16 @@
 #include "srsran/support/io/sockets.h"
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <utility>
+#include <optional>
+// IP_RECVTOS may be defined in linux/in.h
+#ifdef __linux__
+#include <linux/in.h>
+#endif
 
 using namespace srsran;
 
@@ -248,6 +254,7 @@ struct receive_context {
   std::vector<::sockaddr_storage>   rx_srcaddr;
   std::vector<::mmsghdr>            rx_msghdr;
   std::vector<::iovec>              rx_iovecs;
+  std::vector<std::vector<uint8_t>> rx_control; // Control messages for IP_PKTINFO
 };
 
 } // namespace
@@ -264,6 +271,7 @@ receive_context::receive_context(unsigned rx_max_mmsg)
   rx_srcaddr.resize(rx_max_mmsg);
   rx_msghdr.resize(rx_max_mmsg);
   rx_iovecs.resize(rx_max_mmsg);
+  rx_control.resize(rx_max_mmsg);
 
   for (unsigned i = 0; i != rx_max_mmsg; ++i) {
     rx_msghdr[i].msg_hdr             = {};
@@ -274,6 +282,12 @@ receive_context::receive_context(unsigned rx_max_mmsg)
     rx_iovecs[i].iov_len            = network_gateway_udp_max_len;
     rx_msghdr[i].msg_hdr.msg_iov    = &rx_iovecs[i];
     rx_msghdr[i].msg_hdr.msg_iovlen = 1;
+
+    // Allocate control message buffer for IP_PKTINFO (ToS extraction)
+    // Space for IP_PKTINFO + IP_TOS
+    rx_control[i].resize(CMSG_SPACE(sizeof(struct in_pktinfo)) + CMSG_SPACE(sizeof(uint8_t)));
+    rx_msghdr[i].msg_hdr.msg_control    = rx_control[i].data();
+    rx_msghdr[i].msg_hdr.msg_controllen = rx_control[i].size();
   }
 }
 
@@ -298,6 +312,14 @@ void udp_network_gateway_impl::receive()
     return;
   }
 
+  // Log control message status for first packet only (to avoid spam)
+  static bool first_packet_logged = false;
+  if (!first_packet_logged && rx_msgs > 0) {
+    struct msghdr* first_msg = &rx_context.rx_msghdr[0].msg_hdr;
+    logger.warning("[IPTABLES-DSCP] First packet received: msg_controllen={} (after recvmmsg)", first_msg->msg_controllen);
+    first_packet_logged = true;
+  }
+
   for (int i = 0; i < rx_msgs; ++i) {
     float pool_occupancy =
         (1 - (float)get_byte_buffer_segment_pool_current_size_approx() / get_byte_buffer_segment_pool_capacity());
@@ -312,12 +334,106 @@ void udp_network_gateway_impl::receive()
     }
     span<uint8_t> payload(rx_context.rx_mem[i].data(), rx_context.rx_msghdr[i].msg_len);
 
+    // Extract ToS from outer IP packet header (for iptables DSCP mapping)
+    std::optional<uint8_t> outer_tos = {};
+    struct msghdr* msg = &rx_context.rx_msghdr[i].msg_hdr;
+    
+    // Log every 100 packets to avoid spam
+    static int packet_count = 0;
+    bool should_log = (++packet_count % 100 == 0);
+    
+    // Check if control messages are available
+    // Note: recvmmsg() updates msg_controllen to the actual size of received control messages
+    if (msg->msg_controllen > 0) {
+      if (should_log) {
+        logger.info("[IPTABLES-DSCP] Control message available: msg_controllen={} (packet {})", msg->msg_controllen, packet_count);
+      }
+      
+      bool found_tos = false;
+      for (struct cmsghdr* cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL; cmsg = CMSG_NXTHDR(msg, cmsg)) {
+        if (should_log) {
+          logger.info("[IPTABLES-DSCP] Control message: level={} type={} len={}", 
+                       cmsg->cmsg_level, cmsg->cmsg_type, cmsg->cmsg_len);
+        }
+        
+        if (cmsg->cmsg_level == IPPROTO_IP) {
+          if (cmsg->cmsg_type == IP_TOS) {
+            outer_tos = *(uint8_t*)CMSG_DATA(cmsg);
+            found_tos = true;
+            
+            // Extract source IP and port for debugging (to identify UPF packets)
+            char src_ip_str[INET6_ADDRSTRLEN] = {};
+            uint16_t src_port = 0;
+            if (msg->msg_name != nullptr) {
+              sockaddr* src_addr = (sockaddr*)msg->msg_name;
+              if (src_addr->sa_family == AF_INET) {
+                sockaddr_in* src_in = (sockaddr_in*)src_addr;
+                inet_ntop(AF_INET, &src_in->sin_addr, src_ip_str, INET6_ADDRSTRLEN);
+                src_port = ntohs(src_in->sin_port);
+              } else if (src_addr->sa_family == AF_INET6) {
+                sockaddr_in6* src_in6 = (sockaddr_in6*)src_addr;
+                inet_ntop(AF_INET6, &src_in6->sin6_addr, src_ip_str, INET6_ADDRSTRLEN);
+                src_port = ntohs(src_in6->sin6_port);
+              }
+            }
+            
+            // Always log when ToS is extracted (important event) - include source info for debugging
+            // Check if this is localhost traffic (127.0.0.x)
+            bool is_localhost = (strncmp(src_ip_str, "127.0.0.", 8) == 0) || (strcmp(src_ip_str, "::1") == 0);
+            const char* traffic_type = is_localhost ? "로컬호스트" : "외부";
+            
+            // Additional diagnostic: Check if iptables DSCP module is available
+            // For localhost traffic, iptables INPUT chain may not work, and DSCP module may not be loaded
+            const char* diagnostic_note = "";
+            if (is_localhost && outer_tos.value() == 0x00) {
+              diagnostic_note = " [진단: 로컬호스트+ToS=0x00 → UPF가 0x00으로 보냈거나 iptables DSCP 모듈 미로드(WSL2 제한 가능). 해결: UPF에서 ToS 설정 또는 실제 네트워크 인터페이스 사용]";
+            } else if (is_localhost) {
+              diagnostic_note = " [진단: 로컬호스트이지만 ToS가 0x00 아님 → iptables가 작동했거나 UPF가 ToS 설정]";
+            } else if (outer_tos.value() == 0x00) {
+              diagnostic_note = " [진단: 외부 트래픽+ToS=0x00 → UPF가 0x00으로 보냈거나 iptables 규칙 미적용]";
+            }
+            
+            logger.warning("[IPTABLES-DSCP] Extracted outer IP ToS=0x{:02x} (DSCP={}) from UDP packet src={}:{} len={} type={}{}",
+                        outer_tos.value(),
+                        (outer_tos.value() >> 2) & 0x3F,
+                        src_ip_str,
+                        src_port,
+                        rx_context.rx_msghdr[i].msg_len,
+                        traffic_type,
+                        diagnostic_note);
+            break;
+          } else if (cmsg->cmsg_type == IP_PKTINFO) {
+            // Extract destination IP from IP_PKTINFO for debugging
+            struct in_pktinfo* pktinfo = (struct in_pktinfo*)CMSG_DATA(cmsg);
+            char dst_ip_str[INET_ADDRSTRLEN] = {};
+            inet_ntop(AF_INET, &pktinfo->ipi_addr, dst_ip_str, INET_ADDRSTRLEN);
+            if (should_log) {
+              logger.info("[IPTABLES-DSCP] Found IP_PKTINFO control message (type={}) dst_ip={} if_index={}", 
+                          IP_PKTINFO, dst_ip_str, pktinfo->ipi_ifindex);
+            }
+          }
+        }
+      }
+      
+      if (!found_tos && should_log) {
+        logger.warning("[IPTABLES-DSCP] Failed to extract outer IP ToS from UDP packet (IP_TOS control message not found, IP_RECVTOS may not be set)");
+      }
+    } else {
+      // msg_controllen is 0, which means no control messages were received
+      // Log this every 100 packets to avoid spam
+      if (should_log) {
+        logger.warning("[IPTABLES-DSCP] No control messages available (msg_controllen=0, packet {}) - IP_RECVTOS or IP_PKTINFO may not be working. Check socket options.", packet_count);
+      }
+    }
+
     byte_buffer pdu = {};
     if (pdu.append(payload)) {
       logger.debug("Received {} bytes on UDP socket. Pool occupancy {:.2f}%",
                    rx_context.rx_msghdr[i].msg_len,
                    pool_occupancy * 100);
-      data_notifier.on_new_pdu(std::move(pdu), *(sockaddr_storage*)rx_context.rx_msghdr[i].msg_hdr.msg_name);
+      data_notifier.on_new_pdu(std::move(pdu), 
+                               *(sockaddr_storage*)rx_context.rx_msghdr[i].msg_hdr.msg_name,
+                               outer_tos);
     } else {
       logger.error("Could not allocate byte buffer. Received {} bytes on UDP socket", rx_context.rx_msghdr[i].msg_len);
     }
@@ -431,6 +547,45 @@ bool udp_network_gateway_impl::set_sockopts()
       return false;
     }
   }
+
+  // Enable IP_PKTINFO and IP_RECVTOS to receive ToS information from outer IP packet header
+  // This allows iptables DSCP changes to be propagated to inner IP packets
+  logger.warning("[IPTABLES-DSCP] Setting socket options: local_ai_family={}", local_ai_family);
+  
+  if (local_ai_family == AF_INET) {
+    int val = 1;
+    // IP_PKTINFO: Receive destination address information
+    if (::setsockopt(sock_fd.value(), IPPROTO_IP, IP_PKTINFO, &val, sizeof(val)) < 0) {
+      logger.warning("[IPTABLES-DSCP] Failed to set IP_PKTINFO socket option: {}. iptables DSCP mapping may not work.", ::strerror(errno));
+      // Don't return false, as this is optional functionality
+    } else {
+      logger.warning("[IPTABLES-DSCP] Successfully set IP_PKTINFO socket option");
+    }
+    
+    // IP_RECVTOS: Receive ToS information in control messages (required for IP_TOS control message)
+    // IP_RECVTOS is defined in Linux 2.6.24+, value is typically 13
+    #ifdef IP_RECVTOS
+    int recvtos_opt = IP_RECVTOS;
+    #else
+    // IP_RECVTOS is typically 13 on Linux (defined in linux/in.h)
+    // Try to use it even if not defined at compile time
+    int recvtos_opt = 13; // IP_RECVTOS value on Linux
+    logger.info("[IPTABLES-DSCP] IP_RECVTOS not defined at compile-time, using runtime value 13");
+    #endif
+    
+    logger.info("[IPTABLES-DSCP] Attempting to set IP_RECVTOS socket option (value={})", recvtos_opt);
+    if (::setsockopt(sock_fd.value(), IPPROTO_IP, recvtos_opt, &val, sizeof(val)) < 0) {
+      logger.warning("[IPTABLES-DSCP] Failed to set IP_RECVTOS socket option (value={}): {}. iptables DSCP mapping may not work.", recvtos_opt, ::strerror(errno));
+      // Don't return false, as this is optional functionality
+    } else {
+      logger.warning("[IPTABLES-DSCP] Successfully set IP_RECVTOS socket option (value={}) for ToS extraction", recvtos_opt);
+    }
+  } else if (local_ai_family == AF_INET6) {
+    logger.info("[IPTABLES-DSCP] IPv6 detected, IP_RECVTOS not applicable (use IPV6_RECVTCLASS for IPv6)");
+  } else {
+    logger.warning("[IPTABLES-DSCP] Unknown address family: {}, IP_RECVTOS not set", local_ai_family);
+  }
+
   logger.debug("Successfully set socket options");
   return true;
 }
@@ -510,3 +665,4 @@ bool udp_network_gateway_impl::close_socket()
   }
   return true;
 }
+

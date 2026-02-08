@@ -23,6 +23,7 @@
 #pragma once
 
 #include "srsran/adt/byte_buffer.h"
+#include <optional>
 
 struct sockaddr_storage;
 
@@ -66,7 +67,8 @@ public:
   /// \brief This callback is invoked on each received PDU.
   /// \param[in]  put Byte-buffer with new PDU.
   /// \param[in]  Source address
-  virtual void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) = 0;
+  /// \param[in]  outer_tos Optional ToS value from outer IP packet header (for iptables DSCP mapping)
+  virtual void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) = 0;
 };
 
 /// \brief Interface to control common parameters to all
@@ -91,3 +93,4 @@ public:
 };
 
 } // namespace srsran
+

@@ -76,10 +76,10 @@ public:
     udp_gw->handle_pdu(std::move(pdu), dest_addr);
   }
 
-  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) override
+  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) override
   {
-    // Forward PDU to data notifier.
-    data_notifier.on_new_pdu(std::move(pdu), src_addr);
+    // Forward PDU to data notifier with outer ToS.
+    data_notifier.on_new_pdu(std::move(pdu), src_addr, outer_tos);
   }
 
   bool get_bind_address(std::string& ip_address) const override { return udp_gw->get_bind_address(ip_address); }
@@ -140,7 +140,7 @@ public:
     // Do nothing.
   }
 
-  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr) override
+  void on_new_pdu(byte_buffer pdu, const sockaddr_storage& src_addr, std::optional<uint8_t> outer_tos = {}) override
   {
     // Do nothing.
   }
@@ -166,3 +166,4 @@ std::unique_ptr<gtpu_gateway> srsran::create_no_core_gtpu_gateway()
 {
   return std::make_unique<no_core_ngu_gateway>();
 }
+
